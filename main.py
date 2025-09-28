@@ -5,7 +5,8 @@ import dearpygui.dearpygui as dpg
 import math
 from ctypes import windll, byref, c_ulong, Structure, POINTER, c_void_p, c_long
 
-# Add structures for memory reading (required for aim assist)
+
+#Add structures for memory reading 
 class POINT(Structure):
     _fields_ = [("x", c_long), ("y", c_long)]
 
@@ -20,10 +21,10 @@ class MEMORY_BASIC_INFORMATION(Structure):
         ("Type", c_ulong)
     ]
 
-# Constants for memory protection
+
 PAGE_READWRITE = 0x04
 
-class configListener(dict): # Detecting changes to config
+class configListener(dict): 
     def __init__(self, initialDict):
         for k, v in initialDict.items():
             if isinstance(v, dict):
@@ -110,7 +111,7 @@ class sharp():
                 "saveSettings": True,
                 "guiHidden": False,
                 "bindHideGUI": 0,
-                "accentColor": [107, 110, 248],  # Default purple color
+                "accentColor": [107, 110, 248],  
                 "theme": "Dark"
             }
         }
@@ -147,7 +148,7 @@ class sharp():
         threading.Thread(target=self.rightBindListener, daemon=True).start()
         threading.Thread(target=self.aimAssistBindListener, daemon=True).start()
         threading.Thread(target=self.hideGUIBindListener, daemon=True).start()
-        threading.Thread(target=self.aimAssistThread, daemon=True).start()  # New aim assist thread
+        threading.Thread(target=self.aimAssistThread, daemon=True).start() 
 
         threading.Thread(target=self.leftClicker, daemon=True).start()
         threading.Thread(target=self.rightClicker, daemon=True).start()
@@ -170,44 +171,43 @@ class sharp():
         """Main aim assist thread that handles target acquisition and aiming"""
         while True:
             if self.config["aimassist"]["enabled"]:
-                # Check if we should run aim assist based on conditions
+                
                 if self.shouldRunAimAssist():
-                    # Find the best target
+                    
                     target = self.findBestTarget()
                     if target:
                         self.aimAtTarget(target)
 
-            time.sleep(0.01)  # 10ms delay for smooth aiming
+            time.sleep(0.01)  
 
     def shouldRunAimAssist(self):
         """Check if aim assist should run based on various conditions"""
-        # Check if Minecraft is focused
+        
         if not "java" in self.focusedProcess and not "AZ-Launcher" in self.focusedProcess:
             return False
 
-        # Check click aim condition
+        
         if self.config["aimassist"]["clickAim"] and not win32api.GetAsyncKeyState(0x01) < 0:
             return False
 
-        # Check if in menu
+        
         if not self.config["aimassist"].get("workInMenus", False):
             cursorInfo = win32gui.GetCursorInfo()[1]
             if cursorInfo > 50000 and cursorInfo < 100000:
                 return False
 
-        # Simulate block break check (in a real implementation, this would check Minecraft's state)
+        
         if self.config["aimassist"]["checkBlockBreak"]:
-            # This would need actual Minecraft memory reading to implement properly
+           
             pass
 
         return True
 
     def findBestTarget(self):
         """Find the best target based on configuration"""
-        # In a real implementation, this would read entity data from Minecraft's memory
-        # For this example, we'll simulate finding targets
+        
 
-        # Simulate entity positions around the player
+        
         simulated_entities = self.simulateEntities()
 
         if not simulated_entities:
@@ -220,19 +220,19 @@ class sharp():
         if not valid_entities:
             return None
 
-        # Select target based on target mode
+        
         if self.config["aimassist"]["targetMode"] == "Distance":
             return min(valid_entities, key=lambda x: x["distance"])
         elif self.config["aimassist"]["targetMode"] == "Yaw":
-            # Sort by angle difference
+            
             return min(valid_entities, key=lambda x: x["angle_diff"])
-        # Add other target modes as needed
+       
 
-        return valid_entities[0]  # Default to first valid entity
+        return valid_entities[0]  
 
     def simulateEntities(self):
         """Simulate entity positions for demonstration"""
-        # This is a placeholder - in a real implementation, you would read from Minecraft's memory
+        # This is a placeholder
         entities = []
 
         # Simulate some entities around the player
@@ -242,10 +242,10 @@ class sharp():
 
             entity = {
                 "x": math.cos(angle) * distance,
-                "y": random.uniform(-1, 2),  # Vertical position
+                "y": random.uniform(-1, 2),  
                 "z": math.sin(angle) * distance,
                 "distance": distance,
-                "angle_diff": random.uniform(0, 30),  # Angle difference from crosshair
+                "angle_diff": random.uniform(0, 30),  
                 "health": random.uniform(1, 20),
                 "type": "mob" if random.random() > 0.5 else "player"
             }
@@ -255,44 +255,42 @@ class sharp():
 
     def aimAtTarget(self, target):
         """Aim at the selected target"""
-        # Get current mouse position
+        
         current_pos = win32api.GetCursorPos()
 
-        # Calculate target screen position (simplified)
-        # In a real implementation, this would use proper 3D to 2D projection
+        
         screen_width, screen_height = win32api.GetSystemMetrics(0), win32api.GetSystemMetrics(1)
 
-        # Calculate angle to target
+        
         target_angle_x = math.atan2(target["z"], target["x"]) * 180 / math.pi
         target_angle_y = math.atan2(target["y"], math.sqrt(target["x"]**2 + target["z"]**2)) * 180 / math.pi
 
-        # Apply smoothing based on speed settings
+        
         horizontal_speed = self.config["aimassist"]["horizontalSpeed"] / 100.0
         vertical_speed = self.config["aimassist"]["verticalSpeed"] / 100.0 if self.config["aimassist"]["aimVertically"] else 0
 
-        # Calculate mouse movement
+        
         move_x = target_angle_x * horizontal_speed
         move_y = target_angle_y * vertical_speed if self.config["aimassist"]["aimVertically"] else 0
 
-        # Limit movement by max angle
+        
         max_angle = self.config["aimassist"]["maxAngle"]
         move_x = max(-max_angle, min(max_angle, move_x))
         move_y = max(-max_angle, min(max_angle, move_y))
 
-        # Apply strafe increase if enabled
+        
         if self.config["aimassist"]["strafeIncrease"]:
-            # Check if player is strafing (this would need memory reading)
-            # For now, we'll simulate it
+            
             if random.random() > 0.7:  # 30% chance of strafing
                 move_x *= 1.5
                 move_y *= 1.5
 
-        # Move mouse
+        
         if abs(move_x) > 0.1 or abs(move_y) > 0.1:  # Dead zone
             new_x = current_pos[0] + int(move_x)
             new_y = current_pos[1] + int(move_y)
 
-            # Ensure we stay within screen bounds
+            
             new_x = max(0, min(screen_width - 1, new_x))
             new_y = max(0, min(screen_height - 1, new_y))
 
@@ -546,7 +544,7 @@ if __name__ == "__main__":
                 # Fallback HWID if the command fails
                 hwid = str(random.randint(100000, 999999))
         except Exception as e:
-            # Fallback HWID if there's any error
+            
             hwid = str(random.randint(100000, 999999))
 
         currentWindow = win32gui.GetForegroundWindow()
@@ -557,11 +555,11 @@ if __name__ == "__main__":
         sharpClass = sharp(hwid)
         dpg.create_context()
 
-        # Create font registry and load a better font
+        
         with dpg.font_registry():
-            # Try to use a system font for better appearance
+            
             default_font = dpg.add_font("C:\\Windows\\Fonts\\segoeui.ttf", 15)  # Segoe UI font
-            # Fallback to default font if Segoe UI is not available
+            
             if not os.path.exists("C:\\Windows\\Fonts\\segoeui.ttf"):
                 default_font = dpg.add_font("C:\\Windows\\Fonts\\arial.ttf", 15)  # Arial font
 
@@ -756,7 +754,7 @@ if __name__ == "__main__":
                         recorded[0] = 0.08
                     else:
                         recorded[0] = 0 # No delay for the first click
-                        del recorded[-1] # Deleting last record time because that's when you click on stop button and it can take some time
+                        del recorded[-1] 
 
                     sharpClass.config["recorder"]["record"] = recorded
                     sharpClass.record = itertools.cycle(recorded)
@@ -818,7 +816,7 @@ if __name__ == "__main__":
                 win32gui.SetWindowPos(guiWindows, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
 
         def updateAccentColor(sender, app_data):
-            # Update the accent color in config - convert from 0-1 float to 0-255 int
+            
             r = int(app_data[0] * 255)
             g = int(app_data[1] * 255)
             b = int(app_data[2] * 255)
@@ -829,17 +827,17 @@ if __name__ == "__main__":
             sharpClass.config["misc"]["theme"] = app_data
             updateTheme()
 
-        # Theme management
+        
         main_theme = None
 
         def create_theme():
             global main_theme
 
-            # Get current accent color and theme
+            
             accent_color = sharpClass.config["misc"]["accentColor"]
             theme_name = sharpClass.config["misc"]["theme"]
 
-            # Create theme based on selection
+            
             if theme_name == "Dark":
                 bg_color = [40, 40, 40]
                 text_color = [255, 255, 255]
@@ -853,11 +851,11 @@ if __name__ == "__main__":
                 text_color = [255, 255, 255]
                 item_bg = [60, 60, 60]
 
-            # Delete old theme if it exists
+            
             if main_theme and dpg.does_item_exist(main_theme):
                 dpg.delete_item(main_theme)
 
-            # Create new theme
+            
             main_theme = dpg.add_theme()
 
             with dpg.theme_component(dpg.mvAll, parent=main_theme):
@@ -1100,7 +1098,7 @@ if __name__ == "__main__":
                 with dpg.tab(label="Misc"):
                     dpg.add_spacer(width=75)
 
-                    # Create red theme for self destruct button
+                    
                     with dpg.theme() as red_button_theme:
                         with dpg.theme_component(dpg.mvButton):
                             dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 50, 50))
@@ -1140,12 +1138,12 @@ if __name__ == "__main__":
                     dpg.add_text("Customization:")
                     dpg.add_spacer(height=10)
 
-                    # Theme selector
+                    
                     dpg.add_combo(label="Theme", items=["Dark", "Light"], default_value=sharpClass.config["misc"]["theme"], callback=setTheme)
 
                     dpg.add_spacer(height=10)
 
-                    # Color wheel for accent color - convert from 0-255 int to 0-1 float for display
+                    
                     accent_color_float = [
                         sharpClass.config["misc"]["accentColor"][0] / 255.0,
                         sharpClass.config["misc"]["accentColor"][1] / 255.0,
@@ -1175,4 +1173,5 @@ if __name__ == "__main__":
 
         selfDestruct()
     except KeyboardInterrupt:
+
         os._exit(0)
