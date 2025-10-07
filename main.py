@@ -1,4 +1,4 @@
-version = "1.0+"
+version = "0.75"
 
 import win32api, win32con, win32gui, win32process, psutil, time, threading, random, winsound, os, json, subprocess, sys, itertools
 import dearpygui.dearpygui as dpg
@@ -6,7 +6,7 @@ import math
 from ctypes import windll, byref, c_ulong, Structure, POINTER, c_void_p, c_long
 
 
-#Add structures for memory reading 
+# Add structures for memory reading
 class POINT(Structure):
     _fields_ = [("x", c_long), ("y", c_long)]
 
@@ -24,7 +24,7 @@ class MEMORY_BASIC_INFORMATION(Structure):
 
 PAGE_READWRITE = 0x04
 
-class configListener(dict): 
+class configListener(dict):
     def __init__(self, initialDict):
         for k, v in initialDict.items():
             if isinstance(v, dict):
@@ -62,10 +62,12 @@ class sharp():
                 "mode": "Hold",
                 "bind": 0,
                 "averageCPS": 12,
+                "randomization": "Normal",
                 "onlyWhenFocused": True,
                 "breakBlocks": False,
                 "RMBLock": False,
                 "blockHit": False,
+                "blockHitMode": "Auto",
                 "blockHitChance": 25,
                 "shakeEffect": False,
                 "shakeEffectForce": 5,
@@ -78,6 +80,7 @@ class sharp():
                 "mode": "Hold",
                 "bind": 0,
                 "averageCPS": 12,
+                "randomization": "Normal",
                 "onlyWhenFocused": True,
                 "LMBLock": False,
                 "shakeEffect": False,
@@ -86,32 +89,17 @@ class sharp():
                 "workInMenus": False,
                 "blatant": False
             },
-            "aimassist": {
-                "enabled": False,
-                "bind": 0,
-                "clickAim": True,
-                "strafeIncrease": False,
-                "checkBlockBreak": True,
-                "blockBreakWhitelist": "pickaxe,axe,shovel",
-                "aimVertically": True,
-                "verticalSpeed": 5,
-                "horizontalSpeed": 5,
-                "maxAngle": 30,
-                "distance": 50,
-                "limitToItems": False,
-                "itemsWhitelist": "sword,bow",
-                "targetArea": "Center",
-                "targetMode": "Distance"
-            },
             "recorder": {
                 "enabled": False,
-                "record": [0.08] # Default 12 CPS
+                "record": [0.08] 
             },
             "misc": {
                 "saveSettings": True,
                 "guiHidden": False,
                 "bindHideGUI": 0,
-                "accentColor": [107, 110, 248],  
+                "accentColor": [107, 110, 248],
+                "chromaEnabled": False,
+                "chromaSpeed": 1.0,
                 "theme": "Dark"
             }
         }
@@ -137,21 +125,46 @@ class sharp():
         self.config = configListener(self.config)
         self.record = itertools.cycle(self.config["recorder"]["record"])
 
-        # Aim assist variables
-        self.aim_target = None
-        self.last_mouse_pos = (0, 0)
-        self.entity_list = []
-        self.local_player = None
+        # Chroma variables
+        self.chroma_running = False
+        self.chroma_thread = None
+        self.chroma_hue = 0.0
 
         threading.Thread(target=self.windowListener, daemon=True).start()
         threading.Thread(target=self.leftBindListener, daemon=True).start()
         threading.Thread(target=self.rightBindListener, daemon=True).start()
-        threading.Thread(target=self.aimAssistBindListener, daemon=True).start()
         threading.Thread(target=self.hideGUIBindListener, daemon=True).start()
-        threading.Thread(target=self.aimAssistThread, daemon=True).start() 
 
         threading.Thread(target=self.leftClicker, daemon=True).start()
         threading.Thread(target=self.rightClicker, daemon=True).start()
+
+        
+        if self.config["misc"]["chromaEnabled"]:
+            self.start_chroma()
+
+    def calculate_delay(self, average_cps, randomization_level, is_blatant=False):
+        """Calculate delay based on randomization level"""
+        if is_blatant:
+            return 1 / average_cps
+
+        base_delay = 1 / average_cps
+
+        if randomization_level == "None":
+            return base_delay
+        elif randomization_level == "Normal":
+           
+            return random.uniform(base_delay * 0.5, base_delay * 1.5)
+        elif randomization_level == "Extra":
+            
+            return random.uniform(base_delay * 0.3, base_delay * 2.0)
+        elif randomization_level == "Extra+":
+          
+            if random.random() < 0.1:  
+                return random.uniform(base_delay * 0.1, base_delay * 0.5)
+            else:
+                return random.uniform(base_delay * 0.2, base_delay * 2.5)
+        else:
+            return base_delay
 
     def windowListener(self):
         while True:
@@ -166,143 +179,14 @@ class sharp():
 
             time.sleep(0.5)
 
-    # AIM ASSIST IMPLEMENTATION
-    def aimAssistThread(self):
-        """Main aim assist thread that handles target acquisition and aiming"""
-        while True:
-            if self.config["aimassist"]["enabled"]:
-                
-                if self.shouldRunAimAssist():
-                    
-                    target = self.findBestTarget()
-                    if target:
-                        self.aimAtTarget(target)
-
-            time.sleep(0.01)  
-
-    def shouldRunAimAssist(self):
-        """Check if aim assist should run based on various conditions"""
-        
-        if not "java" in self.focusedProcess and not "AZ-Launcher" in self.focusedProcess:
-            return False
-
-        
-        if self.config["aimassist"]["clickAim"] and not win32api.GetAsyncKeyState(0x01) < 0:
-            return False
-
-        
-        if not self.config["aimassist"].get("workInMenus", False):
-            cursorInfo = win32gui.GetCursorInfo()[1]
-            if cursorInfo > 50000 and cursorInfo < 100000:
-                return False
-
-        
-        if self.config["aimassist"]["checkBlockBreak"]:
-           
-            pass
-
-        return True
-
-    def findBestTarget(self):
-        """Find the best target based on configuration"""
-        
-
-        
-        simulated_entities = self.simulateEntities()
-
-        if not simulated_entities:
-            return None
-
-        # Filter by distance
-        max_distance = self.config["aimassist"]["distance"]
-        valid_entities = [e for e in simulated_entities if e["distance"] <= max_distance]
-
-        if not valid_entities:
-            return None
-
-        
-        if self.config["aimassist"]["targetMode"] == "Distance":
-            return min(valid_entities, key=lambda x: x["distance"])
-        elif self.config["aimassist"]["targetMode"] == "Yaw":
-            
-            return min(valid_entities, key=lambda x: x["angle_diff"])
-       
-
-        return valid_entities[0]  
-
-    def simulateEntities(self):
-        """Simulate entity positions for demonstration"""
-        # This is a placeholder
-        entities = []
-
-        # Simulate some entities around the player
-        for i in range(5):
-            angle = random.uniform(0, 2 * math.pi)
-            distance = random.uniform(2, self.config["aimassist"]["distance"])
-
-            entity = {
-                "x": math.cos(angle) * distance,
-                "y": random.uniform(-1, 2),  
-                "z": math.sin(angle) * distance,
-                "distance": distance,
-                "angle_diff": random.uniform(0, 30),  
-                "health": random.uniform(1, 20),
-                "type": "mob" if random.random() > 0.5 else "player"
-            }
-            entities.append(entity)
-
-        return entities
-
-    def aimAtTarget(self, target):
-        """Aim at the selected target"""
-        
-        current_pos = win32api.GetCursorPos()
-
-        
-        screen_width, screen_height = win32api.GetSystemMetrics(0), win32api.GetSystemMetrics(1)
-
-        
-        target_angle_x = math.atan2(target["z"], target["x"]) * 180 / math.pi
-        target_angle_y = math.atan2(target["y"], math.sqrt(target["x"]**2 + target["z"]**2)) * 180 / math.pi
-
-        
-        horizontal_speed = self.config["aimassist"]["horizontalSpeed"] / 100.0
-        vertical_speed = self.config["aimassist"]["verticalSpeed"] / 100.0 if self.config["aimassist"]["aimVertically"] else 0
-
-        
-        move_x = target_angle_x * horizontal_speed
-        move_y = target_angle_y * vertical_speed if self.config["aimassist"]["aimVertically"] else 0
-
-        
-        max_angle = self.config["aimassist"]["maxAngle"]
-        move_x = max(-max_angle, min(max_angle, move_x))
-        move_y = max(-max_angle, min(max_angle, move_y))
-
-        
-        if self.config["aimassist"]["strafeIncrease"]:
-            
-            if random.random() > 0.7:  # 30% chance of strafing
-                move_x *= 1.5
-                move_y *= 1.5
-
-        
-        if abs(move_x) > 0.1 or abs(move_y) > 0.1:  # Dead zone
-            new_x = current_pos[0] + int(move_x)
-            new_y = current_pos[1] + int(move_y)
-
-            
-            new_x = max(0, min(screen_width - 1, new_x))
-            new_y = max(0, min(screen_height - 1, new_y))
-
-            win32api.SetCursorPos((new_x, new_y))
-
     def leftClicker(self):
         while True:
             if not self.config["recorder"]["enabled"]:
-                if self.config["left"]["blatant"]:
-                    delay = 1 / self.config["left"]["averageCPS"]
-                else:
-                    delay = random.random() % (2 / self.config["left"]["averageCPS"])
+                delay = self.calculate_delay(
+                    self.config["left"]["averageCPS"],
+                    self.config["left"]["randomization"],
+                    self.config["left"]["blatant"]
+                )
             else:
                 delay = float(next(self.record))
 
@@ -343,11 +227,22 @@ class sharp():
                 time.sleep(0.02)
                 win32api.SendMessage(self.window, win32con.WM_LBUTTONUP, 0, 0)
 
-            if self.config["left"]["blockHit"] or (self.config["left"]["blockHit"] and self.config["right"]["enabled"] and self.config["right"]["LMBLock"] and not win32api.GetAsyncKeyState(0x02) < 0):
-                if random.uniform(0, 1) <= self.config["left"]["blockHitChance"] / 100.0:
-                    win32api.SendMessage(self.window, win32con.WM_RBUTTONDOWN, 0, 0)
-                    time.sleep(0.02)
-                    win32api.SendMessage(self.window, win32con.WM_RBUTTONUP, 0, 0)
+            
+            should_block_hit = False
+            if self.config["left"]["blockHit"]:
+                if self.config["left"]["blockHitMode"] == "Auto":
+                    
+                    should_block_hit = random.uniform(0, 1) <= self.config["left"]["blockHitChance"] / 100.0
+                elif self.config["left"]["blockHitMode"] == "Manual":
+                   
+                    if win32api.GetAsyncKeyState(0x02) < 0:
+                       
+                        should_block_hit = True
+
+            if should_block_hit:
+                win32api.SendMessage(self.window, win32con.WM_RBUTTONDOWN, 0, 0)
+                time.sleep(0.02)
+                win32api.SendMessage(self.window, win32con.WM_RBUTTONUP, 0, 0)
         else:
             if self.config["left"]["breakBlocks"]:
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
@@ -356,11 +251,22 @@ class sharp():
                 time.sleep(0.02)
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
 
-            if self.config["left"]["blockHit"] or (self.config["left"]["blockHit"] and self.config["right"]["enabled"] and self.config["right"]["LMBLock"] and not win32api.GetAsyncKeyState(0x02) < 0):
-                if random.uniform(0, 1) <= self.config["left"]["blockHitChance"] / 100.0:
-                    win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0)
-                    time.sleep(0.02)
-                    win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0)
+            # Handle block hit
+            should_block_hit = False
+            if self.config["left"]["blockHit"]:
+                if self.config["left"]["blockHitMode"] == "Auto":
+                    
+                    should_block_hit = random.uniform(0, 1) <= self.config["left"]["blockHitChance"] / 100.0
+                elif self.config["left"]["blockHitMode"] == "Manual":
+                    
+                    if win32api.GetAsyncKeyState(0x02) < 0:
+                        
+                        should_block_hit = True
+
+            if should_block_hit:
+                win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0)
+                time.sleep(0.02)
+                win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0)
 
         if self.config["left"]["soundPath"] != "" and os.path.isfile(self.config["left"]["soundPath"]):
             winsound.PlaySound(self.config["left"]["soundPath"], winsound.SND_ASYNC)
@@ -405,10 +311,11 @@ class sharp():
 
     def rightClicker(self):
         while True:
-            if self.config["right"]["blatant"]:
-                delay = 1 / self.config["right"]["averageCPS"]
-            else:
-                delay = random.random() % (2 / self.config["right"]["averageCPS"])
+            delay = self.calculate_delay(
+                self.config["right"]["averageCPS"],
+                self.config["right"]["randomization"],
+                self.config["right"]["blatant"]
+            )
 
             if self.config["right"]["enabled"]:
                 if self.config["right"]["mode"] == "Hold" and not win32api.GetAsyncKeyState(0x02) < 0:
@@ -489,30 +396,6 @@ class sharp():
 
             time.sleep(0.001)
 
-    def aimAssistBindListener(self):
-        while True:
-            if win32api.GetAsyncKeyState(self.config["aimassist"]["bind"]) != 0:
-                if "java" in self.focusedProcess or "AZ-Launcher" in self.focusedProcess:
-                    cursorInfo = win32gui.GetCursorInfo()[1]
-                    if cursorInfo > 50000 and cursorInfo < 100000:
-                        time.sleep(0.001)
-                        continue
-
-                self.config["aimassist"]["enabled"] = not self.config["aimassist"]["enabled"]
-
-                while True:
-                    try:
-                        dpg.set_value(checkboxToggleAimAssist, not dpg.get_value(checkboxToggleAimAssist))
-                        break
-                    except:
-                        time.sleep(0.1)
-                        pass
-
-                while win32api.GetAsyncKeyState(self.config["aimassist"]["bind"]) != 0:
-                    time.sleep(0.001)
-
-            time.sleep(0.001)
-
     def hideGUIBindListener(self):
         while True:
             if win32api.GetAsyncKeyState(self.config["misc"]["bindHideGUI"]) != 0:
@@ -528,13 +411,78 @@ class sharp():
 
             time.sleep(0.001)
 
+    # Chroma effect
+    def start_chroma(self):
+        """Start the chroma color cycling effect"""
+        if not self.chroma_running:
+            self.chroma_running = True
+            self.chroma_thread = threading.Thread(target=self._chroma_loop, daemon=True)
+            self.chroma_thread.start()
+
+    def stop_chroma(self):
+        """Stop the chroma color cycling effect"""
+        self.chroma_running = False
+        if self.chroma_thread:
+            self.chroma_thread.join(timeout=1.0)
+            self.chroma_thread = None
+
+    def _chroma_loop(self):
+        """Main chroma color cycling loop"""
+        while self.chroma_running:
+           
+            r, g, b = self.hsv_to_rgb(self.chroma_hue, 1.0, 1.0)
+            r, g, b = int(r * 255), int(g * 255), int(b * 255)
+
+            
+            self.config["misc"]["accentColor"] = [r, g, b]
+
+            
+            self.chroma_hue += 0.01 * self.config["misc"]["chromaSpeed"]
+            if self.chroma_hue >= 1.0:
+                self.chroma_hue = 0.0
+
+            
+            try:
+                updateTheme()
+            except:
+                pass
+
+            
+            sleep_time = max(0.01, 0.05 / self.config["misc"]["chromaSpeed"])
+            time.sleep(sleep_time)
+
+    def hsv_to_rgb(self, h, s, v):
+        """Convert HSV color to RGB"""
+        if s == 0.0:
+            return v, v, v
+
+        i = int(h * 6.0)
+        f = (h * 6.0) - i
+        p = v * (1.0 - s)
+        q = v * (1.0 - s * f)
+        t = v * (1.0 - s * (1.0 - f))
+        i = i % 6
+
+        if i == 0:
+            return v, t, p
+        elif i == 1:
+            return q, v, p
+        elif i == 2:
+            return p, v, t
+        elif i == 3:
+            return p, q, v
+        elif i == 4:
+            return t, p, v
+        else:
+            return v, p, q
+
 if __name__ == "__main__":
     try:
         if os.name != "nt":
             input("Sharp+ is only working on Windows.")
             os._exit(0)
 
-        # Fixed HWID retrieval with error handling
+        
         try:
             (suppost_sid, error) = subprocess.Popen("wmic useraccount where name='%username%' get sid", stdout=subprocess.PIPE, shell=True).communicate()
             sid_lines = suppost_sid.split(b"\n")
@@ -544,7 +492,6 @@ if __name__ == "__main__":
                 # Fallback HWID if the command fails
                 hwid = str(random.randint(100000, 999999))
         except Exception as e:
-            
             hwid = str(random.randint(100000, 999999))
 
         currentWindow = win32gui.GetForegroundWindow()
@@ -555,13 +502,10 @@ if __name__ == "__main__":
         sharpClass = sharp(hwid)
         dpg.create_context()
 
-        
         with dpg.font_registry():
-            
-            default_font = dpg.add_font("C:\\Windows\\Fonts\\segoeui.ttf", 15)  # Segoe UI font
-            
+            default_font = dpg.add_font("C:\\Windows\\Fonts\\segoeui.ttf", 15)
             if not os.path.exists("C:\\Windows\\Fonts\\segoeui.ttf"):
-                default_font = dpg.add_font("C:\\Windows\\Fonts\\arial.ttf", 15)  # Arial font
+                default_font = dpg.add_font("C:\\Windows\\Fonts\\arial.ttf", 15)
 
         def toggleLeftClicker(id: int, value: bool):
             sharpClass.config["left"]["enabled"] = value
@@ -592,6 +536,12 @@ if __name__ == "__main__":
         def setLeftAverageCPS(id: int, value: int):
             sharpClass.config["left"]["averageCPS"] = value
 
+        def setLeftRandomization(id: int, value: str):
+            sharpClass.config["left"]["randomization"] = value
+
+        def setLeftBlockHitMode(id: int, value: str):
+            sharpClass.config["left"]["blockHitMode"] = value
+
         def toggleLeftOnlyWhenFocused(id: int, value:bool):
             sharpClass.config["left"]["onlyWhenFocused"] = value
 
@@ -616,11 +566,24 @@ if __name__ == "__main__":
         def setLeftClickSoundPath(id: int, value: str):
             sharpClass.config["left"]["soundPath"] = value
 
+        def browseLeftSoundFile():
+            with dpg.file_dialog(directory_selector=False, show=True, callback=setLeftSoundFromDialog, height=400):
+                dpg.add_file_extension("Sound files (*.wav){.wav}")
+
+        def setLeftSoundFromDialog(sender, app_data):
+            if app_data['file_path_name']:
+                sharpClass.config["left"]["soundPath"] = app_data['file_path_name']
+                dpg.set_value(inputLeftClickSoundPath, app_data['file_path_name'])
+
         def toggleLeftWorkInMenus(id: int, value: bool):
             sharpClass.config["left"]["workInMenus"] = value
 
         def toggleLeftBlatantMode(id: int, value: bool):
             sharpClass.config["left"]["blatant"] = value
+            if value:
+                dpg.configure_item(sliderLeftAverageCPS, max_value=60)
+            else:
+                dpg.configure_item(sliderLeftAverageCPS, max_value=20)
 
         def toggleRightClicker(id: int, value: bool):
             sharpClass.config["right"]["enabled"] = value
@@ -651,7 +614,10 @@ if __name__ == "__main__":
         def setRightAverageCPS(id: int, value: int):
             sharpClass.config["right"]["averageCPS"] = value
 
-        def toggleRightOnlyWhenFocused(id: int, value: bool):  # Fixed this function
+        def setRightRandomization(id: int, value: str):
+            sharpClass.config["right"]["randomization"] = value
+
+        def toggleRightOnlyWhenFocused(id: int, value: bool):
             sharpClass.config["right"]["onlyWhenFocused"] = value
 
         def toggleRightLMBLock(id: int, value: bool):
@@ -666,74 +632,24 @@ if __name__ == "__main__":
         def setRightClickSoundPath(id: int, value: str):
             sharpClass.config["right"]["soundPath"] = value
 
+        def browseRightSoundFile():
+            with dpg.file_dialog(directory_selector=False, show=True, callback=setRightSoundFromDialog, height=400):
+                dpg.add_file_extension("Sound files (*.wav){.wav}")
+
+        def setRightSoundFromDialog(sender, app_data):
+            if app_data['file_path_name']:
+                sharpClass.config["right"]["soundPath"] = app_data['file_path_name']
+                dpg.set_value(inputRightClickSoundPath, app_data['file_path_name'])
+
         def toggleRightWorkInMenus(id: int, value: bool):
             sharpClass.config["right"]["workInMenus"] = value
 
         def toggleRightBlatantMode(id: int, value: bool):
             sharpClass.config["right"]["blatant"] = value
-
-        # Aim Assist functions
-        def toggleAimAssist(id: int, value: bool):
-            sharpClass.config["aimassist"]["enabled"] = value
-
-        waitingForKeyAimAssist = False
-        def statusBindAimAssist(id: int):
-            global waitingForKeyAimAssist
-
-            if not waitingForKeyAimAssist:
-                with dpg.handler_registry(tag="Aim Assist Bind Handler"):
-                    dpg.add_key_press_handler(callback=setBindAimAssist)
-
-                dpg.set_item_label(buttonBindAimAssist, "...")
-                waitingForKeyAimAssist = True
-
-        def setBindAimAssist(id: int, value: str):
-            global waitingForKeyAimAssist
-
-            if waitingForKeyAimAssist:
-                sharpClass.config["aimassist"]["bind"] = value
-                dpg.set_item_label(buttonBindAimAssist, f"Bind: {chr(value)}")
-                dpg.delete_item("Aim Assist Bind Handler")
-                waitingForKeyAimAssist = False
-
-        def toggleClickAim(id: int, value: bool):
-            sharpClass.config["aimassist"]["clickAim"] = value
-
-        def toggleStrafeIncrease(id: int, value: bool):
-            sharpClass.config["aimassist"]["strafeIncrease"] = value
-
-        def toggleCheckBlockBreak(id: int, value: bool):
-            sharpClass.config["aimassist"]["checkBlockBreak"] = value
-
-        def setBlockBreakWhitelist(id: int, value: str):
-            sharpClass.config["aimassist"]["blockBreakWhitelist"] = value
-
-        def toggleAimVertically(id: int, value: bool):
-            sharpClass.config["aimassist"]["aimVertically"] = value
-
-        def setVerticalSpeed(id: int, value: int):
-            sharpClass.config["aimassist"]["verticalSpeed"] = value
-
-        def setHorizontalSpeed(id: int, value: int):
-            sharpClass.config["aimassist"]["horizontalSpeed"] = value
-
-        def setMaxAngle(id: int, value: int):
-            sharpClass.config["aimassist"]["maxAngle"] = value
-
-        def setDistance(id: int, value: int):
-            sharpClass.config["aimassist"]["distance"] = value
-
-        def toggleLimitToItems(id: int, value: bool):
-            sharpClass.config["aimassist"]["limitToItems"] = value
-
-        def setItemsWhitelist(id: int, value: str):
-            sharpClass.config["aimassist"]["itemsWhitelist"] = value
-
-        def setTargetArea(id: int, value: str):
-            sharpClass.config["aimassist"]["targetArea"] = value
-
-        def setTargetMode(id: int, value: str):
-            sharpClass.config["aimassist"]["targetMode"] = value
+            if value:
+                dpg.configure_item(sliderRightAverageCPS, max_value=60)
+            else:
+                dpg.configure_item(sliderRightAverageCPS, max_value=20)
 
         def toggleRecorder(id: int, value: bool):
             sharpClass.config["recorder"]["enabled"] = value
@@ -750,11 +666,11 @@ if __name__ == "__main__":
 
             while True:
                 if not recording:
-                    if len(recorded) < 2: # Avoid saving a record with 0 click
+                    if len(recorded) < 2:
                         recorded[0] = 0.08
                     else:
-                        recorded[0] = 0 # No delay for the first click
-                        del recorded[-1] 
+                        recorded[0] = 0
+                        del recorded[-1]
 
                     sharpClass.config["recorder"]["record"] = recorded
                     sharpClass.record = itertools.cycle(recorded)
@@ -784,6 +700,7 @@ if __name__ == "__main__":
             dpg.set_value(recordingStatusText, f"Recording: False")
 
         def selfDestruct():
+            sharpClass.stop_chroma()
             dpg.destroy_context()
 
         waitingForKeyHideGUI = False
@@ -816,28 +733,34 @@ if __name__ == "__main__":
                 win32gui.SetWindowPos(guiWindows, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
 
         def updateAccentColor(sender, app_data):
-            
             r = int(app_data[0] * 255)
             g = int(app_data[1] * 255)
             b = int(app_data[2] * 255)
             sharpClass.config["misc"]["accentColor"] = [r, g, b]
             updateTheme()
 
+        def toggleChroma(id: int, value: bool):
+            sharpClass.config["misc"]["chromaEnabled"] = value
+            if value:
+                sharpClass.start_chroma()
+            else:
+                sharpClass.stop_chroma()
+
+        def setChromaSpeed(id: int, value: float):
+            sharpClass.config["misc"]["chromaSpeed"] = value
+
         def setTheme(sender, app_data):
             sharpClass.config["misc"]["theme"] = app_data
             updateTheme()
 
-        
         main_theme = None
 
         def create_theme():
             global main_theme
 
-            
             accent_color = sharpClass.config["misc"]["accentColor"]
             theme_name = sharpClass.config["misc"]["theme"]
 
-            
             if theme_name == "Dark":
                 bg_color = [40, 40, 40]
                 text_color = [255, 255, 255]
@@ -846,16 +769,14 @@ if __name__ == "__main__":
                 bg_color = [240, 240, 240]
                 text_color = [0, 0, 0]
                 item_bg = [220, 220, 220]
-            else:  # Custom or other themes
+            else:
                 bg_color = [40, 40, 40]
                 text_color = [255, 255, 255]
                 item_bg = [60, 60, 60]
 
-            
             if main_theme and dpg.does_item_exist(main_theme):
                 dpg.delete_item(main_theme)
 
-            
             main_theme = dpg.add_theme()
 
             with dpg.theme_component(dpg.mvAll, parent=main_theme):
@@ -865,14 +786,14 @@ if __name__ == "__main__":
                 dpg.add_theme_style(dpg.mvStyleVar_GrabMinSize, 20)
                 dpg.add_theme_style(dpg.mvStyleVar_TabRounding, 4)
 
-                # Colors
+                # colors
                 dpg.add_theme_color(dpg.mvThemeCol_WindowBg, bg_color)
                 dpg.add_theme_color(dpg.mvThemeCol_Text, text_color)
                 dpg.add_theme_color(dpg.mvThemeCol_FrameBg, item_bg)
                 dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, [item_bg[0] + 10, item_bg[1] + 10, item_bg[2] + 10])
                 dpg.add_theme_color(dpg.mvThemeCol_FrameBgActive, accent_color)
 
-                # Accent colors
+                # accent
                 dpg.add_theme_color(dpg.mvThemeCol_TabActive, accent_color)
                 dpg.add_theme_color(dpg.mvThemeCol_TabHovered, accent_color)
                 dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, accent_color)
@@ -909,6 +830,8 @@ if __name__ == "__main__":
 
                     sliderLeftAverageCPS = dpg.add_slider_int(label="Average CPS", default_value=sharpClass.config["left"]["averageCPS"], min_value=1, max_value=20, callback=setLeftAverageCPS)
 
+                    dropdownLeftRandomization = dpg.add_combo(label="Randomization", items=["None", "Normal", "Extra", "Extra+"], default_value=sharpClass.config["left"]["randomization"], callback=setLeftRandomization)
+
                     dpg.add_spacer(width=75)
                     dpg.add_separator()
                     dpg.add_spacer(width=75)
@@ -927,6 +850,7 @@ if __name__ == "__main__":
 
                     checkboxLeftBlockHit = dpg.add_checkbox(label="BlockHit", default_value=sharpClass.config["left"]["blockHit"], callback=toggleLeftBlockHit)
                     sliderLeftBlockHitChance = dpg.add_slider_int(label="BlockHit Chance", default_value=sharpClass.config["left"]["blockHitChance"], min_value=1, max_value=100, callback=setLeftBlockHitChance)
+                    dropdownLeftBlockHitMode = dpg.add_combo(label="BlockHit Mode", items=["Auto", "Manual"], default_value=sharpClass.config["left"]["blockHitMode"], callback=setLeftBlockHitMode)
 
                     dpg.add_spacer(width=125)
 
@@ -937,7 +861,9 @@ if __name__ == "__main__":
                     dpg.add_separator()
                     dpg.add_spacer(width=75)
 
-                    inputLeftClickSoundPath = dpg.add_input_text(label="Click Sound Path (empty for no sound)", default_value=sharpClass.config["left"]["soundPath"], hint="Exemple: mysounds/G505.wav", callback=setLeftClickSoundPath)
+                    with dpg.group(horizontal=True):
+                        inputLeftClickSoundPath = dpg.add_input_text(label="Click Sound Path", default_value=sharpClass.config["left"]["soundPath"], hint="Select a sound file", callback=setLeftClickSoundPath, width=300)
+                        buttonBrowseLeftSound = dpg.add_button(label="Browse", callback=browseLeftSoundFile)
 
                     dpg.add_spacer(width=75)
                     dpg.add_separator()
@@ -962,6 +888,8 @@ if __name__ == "__main__":
 
                     sliderRightAverageCPS = dpg.add_slider_int(label="Average CPS", default_value=sharpClass.config["right"]["averageCPS"], min_value=1, max_value=20, callback=setRightAverageCPS)
 
+                    dropdownRightRandomization = dpg.add_combo(label="Randomization", items=["None", "Normal", "Extra", "Extra+"], default_value=sharpClass.config["right"]["randomization"], callback=setRightRandomization)
+
                     dpg.add_spacer(width=75)
                     dpg.add_separator()
                     dpg.add_spacer(width=75)
@@ -981,7 +909,9 @@ if __name__ == "__main__":
                     dpg.add_separator()
                     dpg.add_spacer(width=75)
 
-                    inputRightClickSoundPath = dpg.add_input_text(label="Click Sound Path (empty for no sound)", default_value=sharpClass.config["right"]["soundPath"], hint="Exemple: mysounds/G505.wav", callback=setRightClickSoundPath)
+                    with dpg.group(horizontal=True):
+                        inputRightClickSoundPath = dpg.add_input_text(label="Click Sound Path", default_value=sharpClass.config["right"]["soundPath"], hint="Select a sound file", callback=setRightClickSoundPath, width=300)
+                        buttonBrowseRightSound = dpg.add_button(label="Browse", callback=browseRightSoundFile)
 
                     dpg.add_spacer(width=75)
                     dpg.add_separator()
@@ -989,77 +919,6 @@ if __name__ == "__main__":
 
                     checkboxRightWorkInMenus = dpg.add_checkbox(label="Work in Menus", default_value=sharpClass.config["right"]["workInMenus"], callback=toggleRightWorkInMenus)
                     checkboxRightBlatantMode = dpg.add_checkbox(label="Blatant Mode", default_value=sharpClass.config["right"]["blatant"], callback=toggleRightBlatantMode)
-
-                with dpg.tab(label="Aim Assist"):
-                    dpg.add_spacer(width=75)
-
-                    with dpg.group(horizontal=True):
-                        checkboxToggleAimAssist = dpg.add_checkbox(label="Toggle", default_value=sharpClass.config["aimassist"]["enabled"], callback=toggleAimAssist)
-                        buttonBindAimAssist = dpg.add_button(label="Click to Bind", callback=statusBindAimAssist)
-
-                        bind = sharpClass.config["aimassist"]["bind"]
-                        if bind != 0:
-                            dpg.set_item_label(buttonBindAimAssist, f"Bind: {chr(bind)}")
-
-                    dpg.add_spacer(width=75)
-                    dpg.add_separator()
-                    dpg.add_spacer(width=75)
-
-                    dpg.add_text("Target Settings: Helps you keep your aim on target by smoothly adjusting your crosshair's position.")
-
-                    dpg.add_spacer(width=75)
-                    dpg.add_separator()
-                    dpg.add_spacer(width=75)
-
-                    checkboxClickAim = dpg.add_checkbox(label="Click Aim", default_value=sharpClass.config["aimassist"]["clickAim"], callback=toggleClickAim)
-                    dpg.add_text("Restrict's AimAssist's functionality so that it only functions while you are clicking.")
-
-                    dpg.add_spacer(width=75)
-
-                    checkboxStrafeIncrease = dpg.add_checkbox(label="Strafe Increase", default_value=sharpClass.config["aimassist"]["strafeIncrease"], callback=toggleStrafeIncrease)
-                    dpg.add_text("Increases the speed of crosshair adjustment when you or your opponent are strafing.")
-
-                    dpg.add_spacer(width=75)
-
-                    checkboxCheckBlockBreak = dpg.add_checkbox(label="Check Block Break", default_value=sharpClass.config["aimassist"]["checkBlockBreak"], callback=toggleCheckBlockBreak)
-                    dpg.add_text("Pauses the module while breaking blocks.")
-                    inputBlockBreakWhitelist = dpg.add_input_text(label="Break Blocks Whitelist", default_value=sharpClass.config["aimassist"]["blockBreakWhitelist"], callback=setBlockBreakWhitelist)
-                    dpg.add_text("Specify a list of items that will be able to break blocks with AimAssist and Check Block Break enabled.")
-
-                    dpg.add_spacer(width=75)
-                    dpg.add_separator()
-                    dpg.add_spacer(width=75)
-
-                    checkboxAimVertically = dpg.add_checkbox(label="Aim Vertically", default_value=sharpClass.config["aimassist"]["aimVertically"], callback=toggleAimVertically)
-                    sliderVerticalSpeed = dpg.add_slider_int(label="Vertical Speed", default_value=sharpClass.config["aimassist"]["verticalSpeed"], min_value=1, max_value=10, callback=setVerticalSpeed)
-                    dpg.add_text("Controls the speed of vertical aim adjustment.")
-
-                    sliderHorizontalSpeed = dpg.add_slider_int(label="Horizontal Speed", default_value=sharpClass.config["aimassist"]["horizontalSpeed"], min_value=1, max_value=10, callback=setHorizontalSpeed)
-                    dpg.add_text("Controls the speed of horizontal aim adjustment.")
-
-                    dpg.add_spacer(width=75)
-
-                    sliderMaxAngle = dpg.add_slider_int(label="Max Angle", default_value=sharpClass.config["aimassist"]["maxAngle"], min_value=1, max_value=90, callback=setMaxAngle)
-                    dpg.add_text("Specifies the maximum angle from your crosshair position that a target can be, for that target to be considered a valid target.")
-
-                    sliderDistance = dpg.add_slider_int(label="Distance", default_value=sharpClass.config["aimassist"]["distance"], min_value=1, max_value=100, callback=setDistance)
-                    dpg.add_text("The maximum distance for an entity to be considered a target.")
-
-                    dpg.add_spacer(width=75)
-                    dpg.add_separator()
-                    dpg.add_spacer(width=75)
-
-                    checkboxLimitToItems = dpg.add_checkbox(label="Limit to Items", default_value=sharpClass.config["aimassist"]["limitToItems"], callback=toggleLimitToItems)
-                    inputItemsWhitelist = dpg.add_input_text(label="Items Whitelist", default_value=sharpClass.config["aimassist"]["itemsWhitelist"], callback=setItemsWhitelist)
-                    dpg.add_text("Restricts AimAssist's functionality so that it only functions while specified items are held in your hand.")
-
-                    dpg.add_spacer(width=75)
-
-                    comboTargetArea = dpg.add_combo(label="Target Area", items=["Center", "Closest"], default_value=sharpClass.config["aimassist"]["targetArea"], callback=setTargetArea)
-                    dpg.add_text("Specifies which part of the target's hitbox the module will aim towards.")
-
-                    comboTargetMode = dpg.add_combo(label="Target Mode", items=["Distance", "Yaw", "Armor", "Threat", "Health"], default_value=sharpClass.config["aimassist"]["targetMode"], callback=setTargetMode)
-                    dpg.add_text("Determines how a module prioritizes target selection when multiple targets are available.")
 
                 with dpg.tab(label="Recorder"):
                     dpg.add_spacer(width=75)
@@ -1098,7 +957,6 @@ if __name__ == "__main__":
                 with dpg.tab(label="Misc"):
                     dpg.add_spacer(width=75)
 
-                    
                     with dpg.theme() as red_button_theme:
                         with dpg.theme_component(dpg.mvButton):
                             dpg.add_theme_color(dpg.mvThemeCol_Button, (200, 50, 50))
@@ -1138,12 +996,10 @@ if __name__ == "__main__":
                     dpg.add_text("Customization:")
                     dpg.add_spacer(height=10)
 
-                    
                     dpg.add_combo(label="Theme", items=["Dark", "Light"], default_value=sharpClass.config["misc"]["theme"], callback=setTheme)
 
                     dpg.add_spacer(height=10)
 
-                    
                     accent_color_float = [
                         sharpClass.config["misc"]["accentColor"][0] / 255.0,
                         sharpClass.config["misc"]["accentColor"][1] / 255.0,
@@ -1153,6 +1009,13 @@ if __name__ == "__main__":
                     dpg.add_color_edit(label="Accent Color", default_value=accent_color_float, callback=updateAccentColor)
                     dpg.add_text("Change the accent color of the interface")
 
+                    dpg.add_spacer(height=10)
+
+                    # Chroma controls
+                    checkboxChroma = dpg.add_checkbox(label="Chroma Effect", default_value=sharpClass.config["misc"]["chromaEnabled"], callback=toggleChroma)
+                    sliderChromaSpeed = dpg.add_slider_float(label="Chroma Speed", default_value=sharpClass.config["misc"]["chromaSpeed"], min_value=0.1, max_value=5.0, callback=setChromaSpeed)
+                    dpg.add_text("Rainbow color cycling effect for the interface")
+
                     dpg.add_spacer(width=75)
                     dpg.add_separator()
                     dpg.add_spacer(width=75)
@@ -1160,8 +1023,14 @@ if __name__ == "__main__":
                     creditsText = dpg.add_text(default_value="Credits: Bambou (Developer) - Enhanced by Sharp+")
                     githubText = dpg.add_text(default_value="https://github.com/B4mb0u/Sharp")
 
-        # Apply initial theme
+        
         updateTheme()
+
+        
+        if sharpClass.config["left"]["blatant"]:
+            dpg.configure_item(sliderLeftAverageCPS, max_value=60)
+        if sharpClass.config["right"]["blatant"]:
+            dpg.configure_item(sliderRightAverageCPS, max_value=60)
 
         dpg.show_viewport()
 
@@ -1173,5 +1042,5 @@ if __name__ == "__main__":
 
         selfDestruct()
     except KeyboardInterrupt:
-
+        sharpClass.stop_chroma()
         os._exit(0)
