@@ -810,7 +810,7 @@ if __name__ == "__main__":
             theme = create_theme()
             dpg.bind_theme(theme)
 
-        dpg.create_viewport(title=f"[v{version}] Sharp+ - Advanced Minecraft Utility", width=1000, height=600)
+        dpg.create_viewport(title=f"[v{version}] Sharp+ - Advanced Minecraft Autoclicker", width=1000, height=600)
 
         with dpg.window(tag="Primary Window"):
             with dpg.tab_bar():
@@ -1020,8 +1020,8 @@ if __name__ == "__main__":
                     dpg.add_separator()
                     dpg.add_spacer(width=75)
 
-                    creditsText = dpg.add_text(default_value="Credits: Bambou (Developer) - Enhanced by Sharp+")
-                    githubText = dpg.add_text(default_value="https://github.com/B4mb0u/Sharp")
+                    creditsText = dpg.add_text(default_value="Credits: Bambou (Developer) - Enhanced by Zikae")
+                    githubText = dpg.add_text(default_value="https://github.com/Zikae/Sharp-")
 
         
         updateTheme()
@@ -1044,3 +1044,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         sharpClass.stop_chroma()
         os._exit(0)
+
