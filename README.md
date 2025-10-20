@@ -70,11 +70,11 @@ Input Handling**: Direct Windows API integration
 Memory Safe**: No Minecraft modification required
 
 Important Disclaimer
-The developer is not responsible for any consequences resulting from this software.
+I am not responsible for any consequences resulting from this software.
 
 Contributing
 
-We welcome contributions! Please feel free to:
+I welcome contributions! Please feel free to:
 Report bugs and issues
 Suggest new features
 Submit pull requests
